@@ -99,7 +99,7 @@ users:
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: false
-    ssh_pwauth: true
+ssh_pwauth: true
 chpasswd:
   list: |
     $USERNAME:$PASSWORD
