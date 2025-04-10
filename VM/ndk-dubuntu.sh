@@ -105,15 +105,14 @@ runcmd:
   - systemctl enable --now docker
 EOF
 
-# Habilitar almacenamiento de snippets si no está activado
-pvesm set "$SNIPPET_STORAGE" --content $(pvesm get "$SNIPPET_STORAGE" | jq -r '.content + ",snippets"' | sed 's/^,//') 2>/dev/null || true
+# Asegurar que el almacenamiento permite 'snippets'
+pvesm set "$SNIPPET_STORAGE" --content snippets,iso,vztmpl,backup 2>/dev/null || true
 
 # Adjuntar disco cloud-init
 qm set "$VMID" --ide2 ${DISK_STORAGE}:cloudinit
 qm set "$VMID" --cicustom "user=${SNIPPET_STORAGE}:snippets/$(basename "$USER_DATA_FILE")"
 
 # Limpiar
-rm -f "$TMP_IMAGE"
 [ -n "$RAW_IMAGE" ] && rm -f "$RAW_IMAGE"
 
 # Iniciar VM
