@@ -105,8 +105,8 @@ REAL_DISK=$(pvesm list $STORAGE | grep "vm-${VMID}-disk" | awk '{print $1}' | he
 
 # 🔧 Conectar disco y cloud-init
 qm set $VMID \
-  --efidisk0 ${STORAGE}:${REAL_DISK},efitype=4m \
-  --scsi0 ${REAL_DISK},size=$DISK_SIZE \
+  --efidisk0 "${REAL_DISK}",efitype=4m \
+  --scsi0 "${REAL_DISK}",size=$DISK_SIZE \
   --ide2 ${STORAGE}:cloudinit \
   --cicustom "user=${SNIPPET_STORAGE}:snippets/$(basename "$USER_DATA_FILE")"
 
