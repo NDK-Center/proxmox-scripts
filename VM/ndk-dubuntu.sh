@@ -48,7 +48,8 @@ fi
 
 # 📄 Crear cloud-init personalizado
 mkdir -p "$CI_DIR"
-cat > "$USER_DATA_FILE" <<EOF
+TEMP_YAML=$(mktemp)
+cat > "$TEMP_YAML" <<EOF
 #cloud-config
 hostname: $HOSTNAME
 manage_etc_hosts: true
@@ -79,6 +80,9 @@ runcmd:
   - systemctl enable docker
   - systemctl start docker
 EOF
+
+pvesm set ${SNIPPET_STORAGE} --content snippets 2>/dev/null || true
+cp "$TEMP_YAML" "$CI_DIR/$(basename "$USER_DATA_FILE")"
 
 # 🧱 Crear la VM (primero se crea antes del importdisk)
 qm create $VMID \
