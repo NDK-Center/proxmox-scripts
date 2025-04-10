@@ -54,7 +54,15 @@ fi
 TMP_IMAGE="$CACHED_IMAGE"
 
 # Crear VM base
-qm create "$VMID" --name "$VMNAME" --memory "$RAM" --cores "$CORES" --net0 virtio,bridge=$BRIDGE --agent enabled=1
+qm create "$VMID" \
+  --name "$VMNAME" \
+  --memory "$RAM" \
+  --cores "$CORES" \
+  --net0 virtio,bridge=$BRIDGE \
+  --agent enabled=1 \
+  --serial0 socket \
+  --ostype l26 \
+  --scsihw virtio-scsi-pci
 
 # Convertir imagen si LVM-thin
 STORAGE_TYPE=$(pvesm status -storage "$DISK_STORAGE" | awk 'NR>1 {print $2}')
@@ -70,7 +78,7 @@ fi
 
 # Importar disco y conectarlo
 qm importdisk "$VMID" "$IMAGE_TO_IMPORT" "$DISK_STORAGE" >/dev/null
-qm set "$VMID" --scsihw virtio-scsi-pci --scsi0 ${DISK_STORAGE}:vm-${VMID}-disk-0,size=$DISK_SIZE
+qm set "$VMID" --scsi0 ${DISK_STORAGE}:vm-${VMID}-disk-0,size=$DISK_SIZE
 
 # Configurar BIOS UEFI y disco EFI DESPUÉS del disco principal
 qm set "$VMID" --bios ovmf
@@ -80,6 +88,7 @@ qm set "$VMID" --efidisk0 ${DISK_STORAGE}:0,format=raw,efitype=4m
 qm set "$VMID" --boot order=scsi0
 
 # Crear archivo de cloud-init personalizado (user-data)
+HASHED_PASS=$(echo "$PASSWORD" | openssl passwd -6 -stdin)
 cat > "$USER_DATA_FILE" <<EOF
 #cloud-config
 hostname: $VMNAME
@@ -91,7 +100,7 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: false
     ssh_pwauth: true
-    passwd: $(echo "$PASSWORD" | openssl passwd -6 -stdin)
+    passwd: $HASHED_PASS
 chpasswd:
   expire: False
 package_update: true
@@ -107,9 +116,10 @@ EOF
 # Asegurar que el almacenamiento permite 'snippets'
 pvesm set "$SNIPPET_STORAGE" --content snippets,iso,vztmpl,backup 2>/dev/null || true
 
-# Adjuntar disco cloud-init
-qm set "$VMID" --ide2 ${DISK_STORAGE}:cloudinit
-qm set "$VMID" --cicustom "user=${SNIPPET_STORAGE}:snippets/$(basename "$USER_DATA_FILE")"
+# Adjuntar disco cloud-init correctamente
+qm set "$VMID" --ide2 ${DISK_STORAGE}:cloudinit \
+  --cicustom "user=${SNIPPET_STORAGE}:snippets/$(basename "$USER_DATA_FILE")" \
+  --serial0 socket --vga serial0
 
 # Limpiar
 [ -n "$RAW_IMAGE" ] && rm -f "$RAW_IMAGE"
