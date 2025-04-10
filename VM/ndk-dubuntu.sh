@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
-# 👤 Solicitar nombre de usuario y contenedor
-USERNAME=$(whiptail --inputbox "Nombre de la VM (y usuario):" 10 60 --title "Nombre" 3>&1 1>&2 2>&3) || exit
+# 👉 Datos del usuario
+USERNAME=$(whiptail --inputbox "Nombre de la VM (y del usuario dentro de Ubuntu):" 10 60 --title "Nombre" 3>&1 1>&2 2>&3) || exit
 if [[ -z "$USERNAME" ]]; then
   echo "❌ El nombre no puede estar vacío."
   exit 1
 fi
 
+# 👉 Parámetros base
 VMID=$(pvesh get /cluster/nextid)
-STORAGE="local-lvm"
+STORAGE="local-lvm"   # Cambia a "local" si usas almacenamiento tipo 'dir'
 DISK_SIZE="32G"
 RAM_SIZE="8192"
 CORE_COUNT="1"
@@ -19,33 +20,46 @@ BRIDGE="vmbr0"
 ARCH="amd64"
 IMAGE_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-${ARCH}.img"
 IMAGE_FILE=$(basename "$IMAGE_URL")
+CI_DIR="/var/lib/vz/snippets"
+USER_DATA_FILE="${CI_DIR}/vm-${VMID}-user-data.yml"
 
-# 📥 Descargar imagen si no existe
+# 👉 Descargar imagen si no está
 if [ ! -f "$IMAGE_FILE" ]; then
-  echo "➡️ Descargando imagen de Ubuntu..."
+  echo "📥 Descargando imagen Ubuntu..."
   wget -q --show-progress "$IMAGE_URL"
 fi
 
-# 💾 Preparar disco
-DISK_IMAGE="vm-${VMID}-disk-0.qcow2"
-pvesm alloc $STORAGE $VMID $DISK_IMAGE 4M >/dev/null
-qm importdisk $VMID "$IMAGE_FILE" $STORAGE -format qcow2 >/dev/null
+# 👉 Detectar tipo de storage
+STORAGE_TYPE=$(pvesm status -storage $STORAGE | awk 'NR>1 {print $2}')
 
-# 📄 Crear cloud-init personalizado
-CI_DIR="/var/lib/vz/snippets"
+# 👉 Convertir imagen a RAW si storage es lvmthin
+if [[ "$STORAGE_TYPE" == "lvmthin" ]]; then
+  echo "🔄 Convirtiendo imagen a RAW para LVM-Thin..."
+  RAW_IMAGE="ubuntu-${VMID}.raw"
+  qemu-img convert -f qcow2 -O raw "$IMAGE_FILE" "$RAW_IMAGE"
+  IMPORT_IMAGE="$RAW_IMAGE"
+  DISK_FORMAT="raw"
+else
+  IMPORT_IMAGE="$IMAGE_FILE"
+  DISK_FORMAT="qcow2"
+fi
+
+# 👉 Asignar disco
+DISK_NAME="vm-${VMID}-disk-0"
+pvesm alloc $STORAGE $VMID $DISK_NAME 4M >/dev/null
+qm importdisk $VMID "$IMPORT_IMAGE" $STORAGE -format $DISK_FORMAT >/dev/null
+
+# 👉 Cloud-init personalizado
 mkdir -p "$CI_DIR"
-USER_DATA_FILE="${CI_DIR}/vm-${VMID}-user-data.yml"
-
 cat > "$USER_DATA_FILE" <<EOF
 #cloud-config
 hostname: $HOSTNAME
 manage_etc_hosts: true
 users:
   - name: $USERNAME
-    gecos: Ubuntu User
     groups: sudo,docker
-    sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: false
     plain_text_passwd: '$PASSWORD'
     ssh_pwauth: true
@@ -69,7 +83,7 @@ runcmd:
   - systemctl start docker
 EOF
 
-# 🖥️ Crear la VM
+# 👉 Crear VM
 qm create $VMID \
   --name "$HOSTNAME" \
   --memory $RAM_SIZE \
@@ -81,17 +95,17 @@ qm create $VMID \
   --ostype l26 \
   --agent enabled=1
 
-# 📦 Añadir disco y cloud-init personalizado
+# 👉 Añadir disco y cloud-init
 qm set $VMID \
-  --efidisk0 ${STORAGE}:${DISK_IMAGE},efitype=4m \
-  --scsi0 ${STORAGE}:${DISK_IMAGE},size=${DISK_SIZE} \
+  --efidisk0 ${STORAGE}:${DISK_NAME},efitype=4m \
+  --scsi0 ${STORAGE}:${DISK_NAME},size=$DISK_SIZE \
   --ide2 ${STORAGE}:cloudinit \
   --cicustom "user=${USER_DATA_FILE}"
 
-# 🚀 Iniciar la VM
+# 👉 Arrancar VM
 qm start $VMID
 
-echo -e "\n✅ VM $VMID creada"
+echo -e "\n✅ VM $VMID creada y encendida"
 echo "👤 Usuario: $USERNAME"
 echo "🔐 Contraseña: $PASSWORD"
-echo "🐳 Docker y nginx instalados al arranque"
+echo "🐳 Docker y Nginx listos tras primer arranque"
