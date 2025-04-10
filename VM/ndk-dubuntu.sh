@@ -42,6 +42,7 @@ SNIPPET_STORAGE="local" # Debe tener habilitado el tipo "snippets"
 CI_DIR="/var/lib/vz/snippets"
 mkdir -p "$CI_DIR"
 USER_DATA_FILE="$CI_DIR/vm-${VMID}-user-data.yaml"
+META_DATA_FILE="$CI_DIR/vm-${VMID}-meta.yaml"
 IMAGE_NAME="ubuntu-24.04-server-cloudimg-amd64.img"
 IMAGE_URL="http://cloud-images.ubuntu.com/releases/24.04/release/$IMAGE_NAME"
 
@@ -113,12 +114,18 @@ runcmd:
   - systemctl enable --now docker
 EOF
 
+# Crear archivo meta-data para reforzar inicialización
+cat > "$META_DATA_FILE" <<EOF
+instance-id: iid-${VMID}
+local-hostname: $VMNAME
+EOF
+
 # Asegurar que el almacenamiento permite 'snippets'
 pvesm set "$SNIPPET_STORAGE" --content snippets,iso,vztmpl,backup 2>/dev/null || true
 
 # Adjuntar disco cloud-init correctamente
 qm set "$VMID" --ide2 ${DISK_STORAGE}:cloudinit \
-  --cicustom "user=${SNIPPET_STORAGE}:snippets/$(basename "$USER_DATA_FILE")" \
+  --cicustom "user=${SNIPPET_STORAGE}:snippets/$(basename "$USER_DATA_FILE"),meta=${SNIPPET_STORAGE}:snippets/$(basename "$META_DATA_FILE")" \
   --serial0 socket --vga serial0
 
 # Limpiar
