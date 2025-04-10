@@ -1,122 +1,154 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# Script para crear una VM Ubuntu 24.04 con cloud-init, Docker y Nginx en Proxmox VE 8.x
 set -e
 
-# 👉 Datos del usuario
-USERNAME=$(whiptail --inputbox "Nombre de la VM (y del usuario dentro de Ubuntu):" 10 60 --title "Nombre" 3>&1 1>&2 2>&3) || exit
-if [[ -z "$USERNAME" ]]; then
-  echo "❌ El nombre no puede estar vacío."
+# 🔐 Verificación de permisos
+if [ "$EUID" -ne 0 ]; then
+  echo "❌ Este script debe ejecutarse como root."
   exit 1
 fi
 
-# 👉 Parámetros base
+# 🧰 Verificación de dependencias
+NEEDED_PKGS=""
+command -v whiptail >/dev/null 2>&1 || NEEDED_PKGS+=" whiptail"
+command -v genisoimage >/dev/null 2>&1 || command -v mkisofs >/dev/null 2>&1 || NEEDED_PKGS+=" genisoimage"
+command -v wget >/dev/null 2>&1 || NEEDED_PKGS+=" wget"
+if [ -n "$NEEDED_PKGS" ]; then
+  echo "Instalando dependencias necesarias: $NEEDED_PKGS..."
+  apt update -y && apt install -y $NEEDED_PKGS
+fi
+
+# 👤 Solicitar nombre de usuario
+USERNAME=$(whiptail --inputbox "Nombre de usuario (y nombre de la VM):" 8 60 --title "Crear VM Ubuntu 24.04" 3>&1 1>&2 2>&3)
+[ $? -ne 0 ] && echo "❌ Operación cancelada." && exit 1
+USERNAME=$(echo "$USERNAME" | xargs)
+[[ -z "$USERNAME" || ! "$USERNAME" =~ ^[a-z][-a-z0-9]*$ ]] && echo "❌ Nombre inválido." && exit 1
+
+# 🔐 Contraseña
+PASSWORD=$(whiptail --passwordbox "Contraseña para $USERNAME:" 8 60 --title "Contraseña" 3>&1 1>&2 2>&3)
+[ $? -ne 0 ] && echo "❌ Operación cancelada." && exit 1
+PASSWORD=$(echo "$PASSWORD" | xargs)
+[ -z "$PASSWORD" ] && echo "❌ Contraseña vacía." && exit 1
+
+# ⚙️ Parámetros
 VMID=$(pvesh get /cluster/nextid)
-STORAGE="local-lvm"
-SNIPPET_STORAGE="local"
+VMNAME="$USERNAME"
 DISK_SIZE="32G"
-RAM_SIZE="8192"
-CORE_COUNT="1"
-HOSTNAME="ndk"
-PASSWORD="NDK25"
+RAM="4096"
+CORES="2"
 BRIDGE="vmbr0"
-ARCH="amd64"
-IMAGE_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-${ARCH}.img"
-IMAGE_FILE=$(basename "$IMAGE_URL")
-CI_DIR="/var/lib/vz/snippets"
-USER_DATA_FILE="${CI_DIR}/vm-${VMID}-user-data.yml"
+ISO_STORAGE="local"
+DISK_STORAGE=$(pvesm status | grep -qw "local-lvm" && echo "local-lvm" || echo "local")
+IMAGE_URL="http://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+TMP_IMAGE="/tmp/ubuntu-24.04-cloudimg-${VMID}.img"
 
-# 📥 Descargar imagen si no está
-if [ ! -f "$IMAGE_FILE" ]; then
-  echo "📥 Descargando imagen Ubuntu..."
-  wget -q --show-progress "$IMAGE_URL"
-fi
+echo "✅ VMID asignado: $VMID"
+echo "📦 Almacenamiento disco: $DISK_STORAGE"
 
-# 📂 Detectar tipo de storage
-STORAGE_TYPE=$(pvesm status -storage $STORAGE | awk 'NR>1 {print $2}')
+# 📥 Descargar imagen
+echo "Descargando imagen de Ubuntu 24.04..."
+wget -q --show-progress -O "$TMP_IMAGE" "$IMAGE_URL" || { echo "❌ Error descargando imagen"; exit 1; }
 
-# 🔄 Convertir imagen si es lvmthin
+# 🔧 Crear VM
+echo "Creando VM..."
+qm create "$VMID" --name "$VMNAME" --memory "$RAM" --cores "$CORES" --net0 virtio,bridge=$BRIDGE
+
+# 🧠 BIOS y EFI
+echo "Configurando BIOS UEFI..."
+qm set "$VMID" --bios ovmf
+qm set "$VMID" --efidisk0 ${DISK_STORAGE}:0,format=raw
+
+# 📂 Tipo de almacenamiento
+STORAGE_TYPE=$(pvesm status -storage "$DISK_STORAGE" | awk 'NR>1 {print $2}')
+RAW_IMAGE=""
 if [[ "$STORAGE_TYPE" == "lvmthin" ]]; then
-  echo "🔄 Convirtiendo imagen a RAW para LVM-Thin..."
-  RAW_IMAGE="ubuntu-${VMID}.raw"
-  qemu-img convert -f qcow2 -O raw "$IMAGE_FILE" "$RAW_IMAGE"
-  IMPORT_IMAGE="$RAW_IMAGE"
-  DISK_FORMAT="raw"
+  echo "Convirtiendo imagen a RAW para LVM-thin..."
+  RAW_IMAGE="/tmp/ubuntu-24.04-${VMID}.raw"
+  qemu-img convert -f qcow2 -O raw "$TMP_IMAGE" "$RAW_IMAGE"
+  IMAGE_TO_IMPORT="$RAW_IMAGE"
 else
-  IMPORT_IMAGE="$IMAGE_FILE"
-  DISK_FORMAT="qcow2"
+  IMAGE_TO_IMPORT="$TMP_IMAGE"
 fi
 
-# 📄 Crear cloud-init personalizado
-mkdir -p "$CI_DIR"
-TEMP_YAML=$(mktemp)
-cat > "$TEMP_YAML" <<EOF
+# 💽 Importar disco
+echo "Importando disco al almacenamiento..."
+qm importdisk "$VMID" "$IMAGE_TO_IMPORT" "$DISK_STORAGE" >/dev/null
+
+# 🔗 Conectar disco
+echo "Conectando disco como scsi0..."
+qm set "$VMID" --scsihw virtio-scsi-pci --scsi0 ${DISK_STORAGE}:vm-${VMID}-disk-0,size=$DISK_SIZE
+
+# 🚀 Configurar boot
+qm set "$VMID" --boot order=scsi0 --bootdisk scsi0
+
+# 🌩️ Crear archivos cloud-init
+echo "Generando archivos de cloud-init..."
+CIDATA_DIR=$(mktemp -d)
+cat > "$CIDATA_DIR/meta-data" <<EOF
+instance-id: iid-${VMID}-${USERNAME}
+local-hostname: $VMNAME
+EOF
+
+cat > "$CIDATA_DIR/user-data" <<EOF
 #cloud-config
-hostname: $HOSTNAME
+hostname: $VMNAME
 manage_etc_hosts: true
-network:
-  version: 2
-  ethernets:
-    ens18:
-      dhcp4: true
 users:
+  - default
   - name: $USERNAME
-    groups: sudo,docker
+    groups: sudo
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: false
-    plain_text_passwd: '$PASSWORD'
-    ssh_pwauth: true
-
+ssh_pwauth: true
+chpasswd:
+  list: |
+    $USERNAME:$PASSWORD
+  expire: False
 package_update: true
-package_upgrade: true
 packages:
-  - ca-certificates
-  - curl
-  - gnupg
-  - lsb-release
   - nginx
-
 runcmd:
-  - apt-get update
-  - apt-get install -y curl gnupg lsb-release nginx
-  - curl -fsSL https://get.docker.com | sh
-  - systemctl enable docker
-  - systemctl start docker
+  - curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+  - sh /tmp/get-docker.sh
+  - usermod -aG docker $USERNAME
+  - systemctl enable --now docker
 EOF
 
-pvesm set ${SNIPPET_STORAGE} --content snippets 2>/dev/null || true
-cp "$TEMP_YAML" "$CI_DIR/$(basename "$USER_DATA_FILE")"
+cat > "$CIDATA_DIR/network-config" <<EOF
+version: 2
+ethernets:
+  net0:
+    match:
+      name: "e*"
+    dhcp4: true
+EOF
 
-rm -f "$TEMP_YAML"
+# 💿 Crear ISO de cloud-init
+CIDATA_ISO="/var/lib/vz/template/iso/${VMID}-${VMNAME}-cidata.iso"
+GENISO_CMD=$(command -v genisoimage || command -v mkisofs)
+$GENISO_CMD -output "$CIDATA_ISO" -volid cidata -joliet -rock \
+  "$CIDATA_DIR/user-data" "$CIDATA_DIR/meta-data" "$CIDATA_DIR/network-config" >/dev/null
+echo "✅ ISO de cloud-init creada: $CIDATA_ISO"
 
-# 🧱 Crear la VM (primero se crea antes del importdisk)
-qm create "$VMID" \
-  --name "$USERNAME" \
-  --memory $RAM_SIZE \
-  --cores $CORE_COUNT \
-  --net0 virtio,bridge=$BRIDGE \
-  --scsihw virtio-scsi-pci \
-  --serial0 socket \
-  --boot order=scsi0 \
-  --ostype l26 \
-  --agent enabled=1
+# 🔗 Adjuntar ISO a la VM
+echo "Adjuntando ISO a la VM..."
+qm set "$VMID" --ide2 ${ISO_STORAGE}:iso/$(basename "$CIDATA_ISO"),media=cdrom
 
-# 💾 Importar disco y obtener nombre real asignado
-qm importdisk "$VMID" "$IMPORT_IMAGE" $STORAGE -format $DISK_FORMAT >/dev/null
+# 🧹 Limpieza
+rm -f "$TMP_IMAGE"
+[ -n "$RAW_IMAGE" ] && rm -f "$RAW_IMAGE"
+rm -rf "$CIDATA_DIR"
 
-REAL_DISK=$(pvesm list $STORAGE | grep "vm-${VMID}-disk" | awk '{print $1}' | head -n1)
-
-# 🔧 Conectar disco y cloud-init
-qm set "$VMID" \
-  --efidisk0 "${REAL_DISK}",efitype=4m \
-  --scsi0 "${REAL_DISK}",size=$DISK_SIZE \
-  --ide2 ${STORAGE}:cloudinit \
-  --cicustom "user=${SNIPPET_STORAGE}:snippets/$(basename "$USER_DATA_FILE")"
-
-
-# 🚀 Iniciar VM
+# 🔥 Iniciar VM
+echo "Iniciando VM..."
 qm start "$VMID"
 
-echo -e "\n✅ VM $VMID creada y encendida"
-echo "👤 Usuario: $USERNAME"
-echo "🔐 Contraseña: $PASSWORD"
-echo "🐳 Docker y Nginx listos tras primer arranque"
+# ✅ Final
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo " ✅ VM creada exitosamente"
+echo " VMID:      $VMID"
+echo " Usuario:   $USERNAME"
+echo " Contraseña: $PASSWORD"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
