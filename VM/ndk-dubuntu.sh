@@ -91,15 +91,17 @@ qm set "$VMID" --boot order=scsi0
 # Crear archivo de cloud-init personalizado (user-data)
 cat > "$USER_DATA_FILE" <<EOF
 #cloud-config
+bootcmd:
+  - echo "☁️ cloud-init detectado y ejecutado correctamente" > /etc/motd
 hostname: $VMNAME
 manage_etc_hosts: true
+ssh_pwauth: true
 users:
   - name: $USERNAME
     groups: sudo
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: false
-ssh_pwauth: true
 chpasswd:
   list: |
     $USERNAME:$PASSWORD
