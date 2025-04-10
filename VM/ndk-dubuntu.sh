@@ -42,12 +42,16 @@ SNIPPET_STORAGE="local" # Debe tener habilitado el tipo "snippets"
 CI_DIR="/var/lib/vz/snippets"
 mkdir -p "$CI_DIR"
 USER_DATA_FILE="$CI_DIR/vm-${VMID}-user-data.yaml"
-IMAGE_URL="http://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
-TMP_IMAGE="/tmp/ubuntu-24.04-cloudimg-${VMID}.img"
+IMAGE_NAME="ubuntu-24.04-server-cloudimg-amd64.img"
+IMAGE_URL="http://cloud-images.ubuntu.com/releases/24.04/release/$IMAGE_NAME"
 
-# Descargar imagen
-echo "Descargando imagen de Ubuntu 24.04..."
-wget -q --show-progress -O "$TMP_IMAGE" "$IMAGE_URL"
+CACHED_IMAGE="/var/lib/vz/template/cache/$IMAGE_NAME"
+if [ ! -f "$CACHED_IMAGE" ]; then
+  echo "Descargando imagen de Ubuntu 24.04 (solo una vez)..."
+  wget -q --show-progress -O "$CACHED_IMAGE" "$IMAGE_URL"
+fi
+
+TMP_IMAGE="$CACHED_IMAGE"
 
 # Crear VM base
 qm create "$VMID" --name "$VMNAME" --memory "$RAM" --cores "$CORES" --net0 virtio,bridge=$BRIDGE --agent enabled=1
