@@ -91,9 +91,8 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: false
     ssh_pwauth: true
+    passwd: $(echo "$PASSWORD" | openssl passwd -6 -stdin)
 chpasswd:
-  list: |
-    $USERNAME:$PASSWORD
   expire: False
 package_update: true
 packages:
