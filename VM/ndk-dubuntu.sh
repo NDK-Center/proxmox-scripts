@@ -23,7 +23,6 @@ IMAGE_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-$
 IMAGE_FILE=$(basename "$IMAGE_URL")
 CI_DIR="/var/lib/vz/snippets"
 USER_DATA_FILE="${CI_DIR}/vm-${VMID}-user-data.yml"
-DISK_NAME="vm-${VMID}-disk-0"
 
 # 📥 Descargar imagen si no está
 if [ ! -f "$IMAGE_FILE" ]; then
@@ -53,6 +52,11 @@ cat > "$TEMP_YAML" <<EOF
 #cloud-config
 hostname: $HOSTNAME
 manage_etc_hosts: true
+network:
+  version: 2
+  ethernets:
+    ens18:
+      dhcp4: true
 users:
   - name: $USERNAME
     groups: sudo,docker
@@ -72,11 +76,9 @@ packages:
   - nginx
 
 runcmd:
-  - mkdir -p /etc/apt/keyrings
-  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  - echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
   - apt-get update
-  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - apt-get install -y curl gnupg lsb-release nginx
+  - curl -fsSL https://get.docker.com | sh
   - systemctl enable docker
   - systemctl start docker
 EOF
@@ -87,8 +89,8 @@ cp "$TEMP_YAML" "$CI_DIR/$(basename "$USER_DATA_FILE")"
 rm -f "$TEMP_YAML"
 
 # 🧱 Crear la VM (primero se crea antes del importdisk)
-qm create $VMID \
-  --name "$HOSTNAME" \
+qm create "$VMID" \
+  --name "$USERNAME" \
   --memory $RAM_SIZE \
   --cores $CORE_COUNT \
   --net0 virtio,bridge=$BRIDGE \
@@ -99,12 +101,12 @@ qm create $VMID \
   --agent enabled=1
 
 # 💾 Importar disco y obtener nombre real asignado
-qm importdisk $VMID "$IMPORT_IMAGE" $STORAGE -format $DISK_FORMAT >/dev/null
+qm importdisk "$VMID" "$IMPORT_IMAGE" $STORAGE -format $DISK_FORMAT >/dev/null
 
 REAL_DISK=$(pvesm list $STORAGE | grep "vm-${VMID}-disk" | awk '{print $1}' | head -n1)
 
 # 🔧 Conectar disco y cloud-init
-qm set $VMID \
+qm set "$VMID" \
   --efidisk0 "${REAL_DISK}",efitype=4m \
   --scsi0 "${REAL_DISK}",size=$DISK_SIZE \
   --ide2 ${STORAGE}:cloudinit \
@@ -112,7 +114,7 @@ qm set $VMID \
 
 
 # 🚀 Iniciar VM
-qm start $VMID
+qm start "$VMID"
 
 echo -e "\n✅ VM $VMID creada y encendida"
 echo "👤 Usuario: $USERNAME"
