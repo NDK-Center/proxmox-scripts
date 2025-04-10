@@ -84,6 +84,8 @@ EOF
 pvesm set ${SNIPPET_STORAGE} --content snippets 2>/dev/null || true
 cp "$TEMP_YAML" "$CI_DIR/$(basename "$USER_DATA_FILE")"
 
+rm -f "$TEMP_YAML"
+
 # 🧱 Crear la VM (primero se crea antes del importdisk)
 qm create $VMID \
   --name "$HOSTNAME" \
