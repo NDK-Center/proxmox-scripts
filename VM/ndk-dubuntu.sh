@@ -88,7 +88,6 @@ qm set "$VMID" --efidisk0 ${DISK_STORAGE}:0,format=raw,efitype=4m
 qm set "$VMID" --boot order=scsi0
 
 # Crear archivo de cloud-init personalizado (user-data)
-HASHED_PASS=$(echo "$PASSWORD" | openssl passwd -6 -stdin)
 cat > "$USER_DATA_FILE" <<EOF
 #cloud-config
 hostname: $VMNAME
@@ -100,8 +99,9 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: false
     ssh_pwauth: true
-    passwd: $HASHED_PASS
 chpasswd:
+  list: |
+    $USERNAME:$PASSWORD
   expire: False
 package_update: true
 packages:
