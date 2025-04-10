@@ -101,7 +101,7 @@ qm set $VMID \
   --efidisk0 ${STORAGE}:${REAL_DISK},efitype=4m \
   --scsi0 ${STORAGE}:${REAL_DISK},size=$DISK_SIZE \
   --ide2 ${STORAGE}:cloudinit \
-  --cicustom "user=${USER_DATA_FILE}"
+  --cicustom "user=local:snippets/$(basename "$USER_DATA_FILE")"
 
 
 # 🚀 Iniciar VM
