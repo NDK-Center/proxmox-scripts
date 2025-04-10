@@ -91,15 +91,18 @@ qm create $VMID \
   --ostype l26 \
   --agent enabled=1
 
-# 💾 Importar disco
+# 💾 Importar disco y obtener nombre real asignado
 qm importdisk $VMID "$IMPORT_IMAGE" $STORAGE -format $DISK_FORMAT >/dev/null
+
+REAL_DISK=$(pvesm list $STORAGE | grep "vm-${VMID}-disk" | awk '{print $1}' | head -n1)
 
 # 🔧 Conectar disco y cloud-init
 qm set $VMID \
-  --efidisk0 ${STORAGE}:${DISK_NAME},efitype=4m \
-  --scsi0 ${STORAGE}:${DISK_NAME},size=$DISK_SIZE \
+  --efidisk0 ${STORAGE}:${REAL_DISK},efitype=4m \
+  --scsi0 ${STORAGE}:${REAL_DISK},size=$DISK_SIZE \
   --ide2 ${STORAGE}:cloudinit \
   --cicustom "user=${USER_DATA_FILE}"
+
 
 # 🚀 Iniciar VM
 qm start $VMID
