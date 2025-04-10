@@ -126,8 +126,11 @@ EOF
 pvesm set "$SNIPPET_STORAGE" --content snippets,iso,vztmpl,backup 2>/dev/null || true
 
 # Adjuntar disco cloud-init correctamente
-qm set "$VMID" --ide2 ${DISK_STORAGE}:cloudinit \
-  --cicustom "user=${SNIPPET_STORAGE}:snippets/$(basename "$USER_DATA_FILE"),meta=${SNIPPET_STORAGE}:snippets/$(basename "$META_DATA_FILE")" \
+qm set "$VMID" \
+  --ide2 "${DISK_STORAGE}":cloudinit \
+  --ciuser "$USERNAME" \
+  --cipassword "$PASSWORD" \
+  --ipconfig0 ip=dhcp \
   --serial0 socket --vga serial0
 
 # Limpiar
