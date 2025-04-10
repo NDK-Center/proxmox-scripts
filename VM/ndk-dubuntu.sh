@@ -1,5 +1,5 @@
 #!/bin/bash
-# Script para crear una VM Ubuntu 24.04 con cloud-init, Docker y Nginx en Proxmox VE 8.x usando snippets
+# Script para crear una VM Ubuntu 24.04 con cloud-init en Proxmox VE 8.x usando configuración estándar
 set -e
 
 # Verificación de permisos
@@ -38,17 +38,12 @@ RAM="4096"
 CORES="2"
 BRIDGE="vmbr0"
 DISK_STORAGE=$(pvesm status | grep -qw "local-lvm" && echo "local-lvm" || echo "local")
-SNIPPET_STORAGE="local" # Debe tener habilitado el tipo "snippets"
-CI_DIR="/var/lib/vz/snippets"
-mkdir -p "$CI_DIR"
-USER_DATA_FILE="$CI_DIR/vm-${VMID}-user-data.yaml"
-META_DATA_FILE="$CI_DIR/vm-${VMID}-meta.yaml"
-IMAGE_NAME="ubuntu-24.04-server-cloudimg-amd64.img"
-IMAGE_URL="http://cloud-images.ubuntu.com/releases/24.04/release/$IMAGE_NAME"
-
+IMAGE_NAME="noble-server-cloudimg-amd64.img"
+IMAGE_URL="https://cloud-images.ubuntu.com/noble/current/$IMAGE_NAME"
 CACHED_IMAGE="/var/lib/vz/template/cache/$IMAGE_NAME"
+
 if [ ! -f "$CACHED_IMAGE" ]; then
-  echo "Descargando imagen de Ubuntu 24.04 (solo una vez)..."
+  echo "Descargando imagen de Ubuntu Noble..."
   wget -q --show-progress -O "$CACHED_IMAGE" "$IMAGE_URL"
 fi
 
@@ -70,7 +65,7 @@ STORAGE_TYPE=$(pvesm status -storage "$DISK_STORAGE" | awk 'NR>1 {print $2}')
 RAW_IMAGE=""
 if [[ "$STORAGE_TYPE" == "lvmthin" ]]; then
   echo "Convirtiendo a RAW para LVM-thin..."
-  RAW_IMAGE="/tmp/ubuntu-24.04-${VMID}.raw"
+  RAW_IMAGE="/tmp/ubuntu-noble-${VMID}.raw"
   qemu-img convert -f qcow2 -O raw "$TMP_IMAGE" "$RAW_IMAGE"
   IMAGE_TO_IMPORT="$RAW_IMAGE"
 else
@@ -88,44 +83,7 @@ qm set "$VMID" --efidisk0 ${DISK_STORAGE}:0,format=raw,efitype=4m
 # Establecer orden de arranque
 qm set "$VMID" --boot order=scsi0
 
-# Crear archivo de cloud-init personalizado (user-data)
-cat > "$USER_DATA_FILE" <<EOF
-#cloud-config
-bootcmd:
-  - echo "☁️ cloud-init detectado y ejecutado correctamente" > /etc/motd
-hostname: $VMNAME
-manage_etc_hosts: true
-ssh_pwauth: true
-users:
-  - name: $USERNAME
-    groups: sudo
-    shell: /bin/bash
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    lock_passwd: false
-chpasswd:
-  list: |
-    $USERNAME:$PASSWORD
-  expire: False
-package_update: true
-packages:
-  - nginx
-runcmd:
-  - curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-  - sh /tmp/get-docker.sh
-  - usermod -aG docker $USERNAME
-  - systemctl enable --now docker
-EOF
-
-# Crear archivo meta-data para reforzar inicialización
-cat > "$META_DATA_FILE" <<EOF
-instance-id: iid-${VMID}
-local-hostname: $VMNAME
-EOF
-
-# Asegurar que el almacenamiento permite 'snippets'
-pvesm set "$SNIPPET_STORAGE" --content snippets,iso,vztmpl,backup 2>/dev/null || true
-
-# Adjuntar disco cloud-init correctamente
+# Adjuntar disco cloud-init correctamente usando opciones estándar
 qm set "$VMID" \
   --ide2 "${DISK_STORAGE}":cloudinit \
   --ciuser "$USERNAME" \
