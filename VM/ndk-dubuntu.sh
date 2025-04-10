@@ -56,10 +56,6 @@ TMP_IMAGE="$CACHED_IMAGE"
 # Crear VM base
 qm create "$VMID" --name "$VMNAME" --memory "$RAM" --cores "$CORES" --net0 virtio,bridge=$BRIDGE --agent enabled=1
 
-# Configurar UEFI y disco EFI
-qm set "$VMID" --bios ovmf
-qm set "$VMID" --efidisk0 ${DISK_STORAGE}:0,format=raw,efitype=4m
-
 # Convertir imagen si LVM-thin
 STORAGE_TYPE=$(pvesm status -storage "$DISK_STORAGE" | awk 'NR>1 {print $2}')
 RAW_IMAGE=""
@@ -76,8 +72,12 @@ fi
 qm importdisk "$VMID" "$IMAGE_TO_IMPORT" "$DISK_STORAGE" >/dev/null
 qm set "$VMID" --scsihw virtio-scsi-pci --scsi0 ${DISK_STORAGE}:vm-${VMID}-disk-0,size=$DISK_SIZE
 
-# Configurar orden de booteo
-qm set "$VMID" --boot order=scsi0 --bootdisk scsi0
+# Configurar BIOS UEFI y disco EFI DESPUÉS del disco principal
+qm set "$VMID" --bios ovmf
+qm set "$VMID" --efidisk0 ${DISK_STORAGE}:0,format=raw,efitype=4m
+
+# Establecer orden de arranque
+qm set "$VMID" --boot order=scsi0
 
 # Crear archivo de cloud-init personalizado (user-data)
 cat > "$USER_DATA_FILE" <<EOF
