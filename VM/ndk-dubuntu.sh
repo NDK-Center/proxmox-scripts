@@ -10,7 +10,8 @@ fi
 
 # 👉 Parámetros base
 VMID=$(pvesh get /cluster/nextid)
-STORAGE="local-lvm"   # Cambia a "local" si usas almacenamiento tipo 'dir'
+STORAGE="local-lvm"
+SNIPPET_STORAGE="local"
 DISK_SIZE="32G"
 RAM_SIZE="8192"
 CORE_COUNT="1"
@@ -101,7 +102,7 @@ qm set $VMID \
   --efidisk0 ${STORAGE}:${REAL_DISK},efitype=4m \
   --scsi0 ${STORAGE}:${REAL_DISK},size=$DISK_SIZE \
   --ide2 ${STORAGE}:cloudinit \
-  --cicustom "user=local:snippets/$(basename "$USER_DATA_FILE")"
+  --cicustom "user=${SNIPPET_STORAGE}:snippets/$(basename "$USER_DATA_FILE")"
 
 
 # 🚀 Iniciar VM
