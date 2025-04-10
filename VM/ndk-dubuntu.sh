@@ -22,17 +22,18 @@ IMAGE_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-$
 IMAGE_FILE=$(basename "$IMAGE_URL")
 CI_DIR="/var/lib/vz/snippets"
 USER_DATA_FILE="${CI_DIR}/vm-${VMID}-user-data.yml"
+DISK_NAME="vm-${VMID}-disk-0"
 
-# 👉 Descargar imagen si no está
+# 📥 Descargar imagen si no está
 if [ ! -f "$IMAGE_FILE" ]; then
   echo "📥 Descargando imagen Ubuntu..."
   wget -q --show-progress "$IMAGE_URL"
 fi
 
-# 👉 Detectar tipo de storage
+# 📂 Detectar tipo de storage
 STORAGE_TYPE=$(pvesm status -storage $STORAGE | awk 'NR>1 {print $2}')
 
-# 👉 Convertir imagen a RAW si storage es lvmthin
+# 🔄 Convertir imagen si es lvmthin
 if [[ "$STORAGE_TYPE" == "lvmthin" ]]; then
   echo "🔄 Convirtiendo imagen a RAW para LVM-Thin..."
   RAW_IMAGE="ubuntu-${VMID}.raw"
@@ -44,12 +45,7 @@ else
   DISK_FORMAT="qcow2"
 fi
 
-# 👉 Asignar disco
-DISK_NAME="vm-${VMID}-disk-0"
-pvesm alloc $STORAGE $VMID $DISK_NAME 4M >/dev/null
-qm importdisk $VMID "$IMPORT_IMAGE" $STORAGE -format $DISK_FORMAT >/dev/null
-
-# 👉 Cloud-init personalizado
+# 📄 Crear cloud-init personalizado
 mkdir -p "$CI_DIR"
 cat > "$USER_DATA_FILE" <<EOF
 #cloud-config
@@ -83,7 +79,7 @@ runcmd:
   - systemctl start docker
 EOF
 
-# 👉 Crear VM
+# 🧱 Crear la VM (primero se crea antes del importdisk)
 qm create $VMID \
   --name "$HOSTNAME" \
   --memory $RAM_SIZE \
@@ -95,14 +91,17 @@ qm create $VMID \
   --ostype l26 \
   --agent enabled=1
 
-# 👉 Añadir disco y cloud-init
+# 💾 Importar disco
+qm importdisk $VMID "$IMPORT_IMAGE" $STORAGE -format $DISK_FORMAT >/dev/null
+
+# 🔧 Conectar disco y cloud-init
 qm set $VMID \
   --efidisk0 ${STORAGE}:${DISK_NAME},efitype=4m \
   --scsi0 ${STORAGE}:${DISK_NAME},size=$DISK_SIZE \
   --ide2 ${STORAGE}:cloudinit \
   --cicustom "user=${USER_DATA_FILE}"
 
-# 👉 Arrancar VM
+# 🚀 Iniciar VM
 qm start $VMID
 
 echo -e "\n✅ VM $VMID creada y encendida"
